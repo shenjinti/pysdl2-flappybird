@@ -4,7 +4,7 @@ import sys
 import sdl2
 import sdl2.ext
 import time
-
+import math
 
 WIDTH = 480
 HEIGHT = 640
@@ -80,6 +80,8 @@ class Tile:
 
     def animation(self, delta):
         for obj in self.actions:
+            if obj.check_ticks(delta) is False:
+                continue
             obj.do_animation(self, delta)
 
     def add_animator(self, anim):
@@ -191,8 +193,6 @@ class TextureAnimator(Animator):
         self.frame_rects = []
 
     def do_animation(self, tile, delta):
-        if self.check_ticks(delta) is False:
-            return
         size = len(self.frame_rects)
         if size <= 1:
             return
@@ -209,19 +209,64 @@ class ScrollAnimator(Animator):
     def __init__(self):
         super(ScrollAnimator, self).__init__()
 
-        self.width = 0
-        self.height = 0
+        self.area = sdl2.rect.SDL_Rect(0, 0, 0, 0)
         self.direction = (0, 0)
 
     def do_animation(self, tile, delta):
-        if self.check_ticks(delta) is False:
+
+        tile.dest.x += self.direction[0]
+        tile.dest.y += self.direction[1]
+
+        if self.direction[0] < 0:
+            if tile.dest.x + tile.dest.w < self.area.x:
+                tile.dest.x = self.area.w
+        else:
+            if tile.dest.x >= self.area.w:
+                tile.dest.x = self.area.x
+
+        if self.direction[1] < 0:
+            if tile.dest.y + tile.dest.h < self.area.y:
+                tile.dest.y = self.area.h
+        else:
+            if tile.dest.y > self.area.h:
+                tile.dest.y = self.area.y
+
+
+class PathAnimator(Animator):
+    def __init__(self):
+        super(PathAnimator, self).__init__()
+        self.emit = None
+
+    def do_animation(self, tile, delta):
+        if self.emit is None:
             return
-        tile.src.x += self.direction[0]
-        tile.src.y += self.direction[1]
-        if tile.src.x >= tile.src.w:
-            tile.src.x = 0
-        if tile.src.y >= tile.src.w:
-            tile.src.y = 0
+
+        point = self.emit.next(self, tile, delta)
+        if point is None:
+            return
+
+        tile.dest.x, tile.dest.y = point
+
+
+class EllipseEmit:
+    def __init__(self, ew, eh):
+        self.ew = ew
+        self.eh = eh
+        self.angle = 0
+
+    def next(self, animator, tile, delta):
+        pos = tile.position
+        degree = 90 - self.angle
+        t = math.atan(self.ew * math.tan(degree * math.pi / 180.0))
+        point = (
+            pos[0] + self.ew * math.cos(t),
+            pos[1] + self.eh * math.sin(t)
+        )
+        self.angle += 10
+        if self.angle >= 180:
+            self.angle = 0
+        return (int(point[0]), int(point[1]))
+
 
 class Bird(Tile):
     def __init__(self, sprite):
@@ -236,15 +281,20 @@ class Bird(Tile):
         ]
         self.add_animator(anim)
 
+        anim = PathAnimator()
+        anim.emit = EllipseEmit(100, 10)
+        self.add_animator(anim)
+
 
 class Floor(Tile):
     def __init__(self, sprite):
         super(Floor, self).__init__(sprite)
 
         anim = ScrollAnimator()
-        anim.direction = (10, 0)
-        anim.interval = 0.2
-
+        anim.direction = (-10, 0)
+        anim.interval = 0.07
+        anim.area = sdl2.rect.SDL_Rect(
+            0, self.position[1], self.position[0], HEIGHT)
         self.add_animator(anim)
 
         self.fill_mode = MODE_TILE
@@ -308,7 +358,6 @@ def run():
 
         scene.process()
         scenerenderer.render(scene)
-
         sdl2.SDL_Delay(20)
 
 
