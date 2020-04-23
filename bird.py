@@ -252,20 +252,20 @@ class EllipseEmit:
     def __init__(self, ew, eh):
         self.ew = ew
         self.eh = eh
-        self.angle = 0
+        self.degree = 0
+        self.step = 10
 
     def next(self, animator, tile, delta):
         pos = tile.position
-        degree = 90 - self.angle
-        t = math.atan(self.ew * math.tan(degree * math.pi / 180.0))
+        t = self.degree * 2 * math.pi / 360
         point = (
-            pos[0] + self.ew * math.cos(t),
-            pos[1] + self.eh * math.sin(t)
+            pos[0] + int(math.cos(t) * self.ew),
+            pos[1] + int(math.sin(t) * self.eh)
         )
-        self.angle += 10
-        if self.angle >= 180:
-            self.angle = 0
-        return (int(point[0]), int(point[1]))
+        self.degree += self.step
+        if self.degree >= 360:
+            self.degree = 0
+        return (point[0], point[1])
 
 
 class Bird(Tile):
@@ -282,7 +282,8 @@ class Bird(Tile):
         self.add_animator(anim)
 
         anim = PathAnimator()
-        anim.emit = EllipseEmit(100, 10)
+        anim.emit = EllipseEmit(0, 10)
+        anim.emit.step = 20
         self.add_animator(anim)
 
 
