@@ -5,6 +5,8 @@ import sdl2
 import sdl2.ext
 import time
 import math
+import random
+
 
 WIDTH = 480
 HEIGHT = 640
@@ -39,12 +41,10 @@ class Tile:
 
     @property
     def position(self):
-        """The top-left position of the Sprite as tuple."""
         return self._x, self._y
 
     @position.setter
     def position(self, value):
-        """The top-left position of the Sprite as tuple."""
         self._x, self._y = value
         self.dest.x, self.dest.y = value
 
@@ -122,11 +122,14 @@ class Tile:
 class Scene:
     def __init__(self, factory):
         self.factory = factory
-        self.objects = []
+        self.objects = set([])
         self._last_process_ticks = time.time()
 
     def add_object(self, obj):
-        self.objects.append(obj)
+        self.objects.add(obj)
+
+    def remove_object(self, obj):
+        self.objects.remove(obj)
 
     def process(self):
         now = time.time()
@@ -211,11 +214,15 @@ class ScrollAnimator(Animator):
 
         self.area = sdl2.rect.SDL_Rect(0, 0, 0, 0)
         self.direction = (0, 0)
+        self.repeat = True
 
     def do_animation(self, tile, delta):
 
         tile.dest.x += self.direction[0]
         tile.dest.y += self.direction[1]
+
+        if self.repeat is False:
+            return
 
         if self.direction[0] < 0:
             if tile.dest.x + tile.dest.w < self.area.x:
@@ -252,20 +259,21 @@ class EllipseEmit:
     def __init__(self, ew, eh):
         self.ew = ew
         self.eh = eh
-        self.degree = 0
+        self.angle = 0
         self.step = 10
 
     def next(self, animator, tile, delta):
         pos = tile.position
-        t = self.degree * 2 * math.pi / 360
+        #t = self.angle * math.pi / 180
+        t = math.radians(self.angle)
         point = (
             pos[0] + int(math.cos(t) * self.ew),
             pos[1] + int(math.sin(t) * self.eh)
         )
-        self.degree += self.step
-        if self.degree >= 360:
-            self.degree = 0
-        return (point[0], point[1])
+        self.angle += self.step
+        if self.angle >= 360:
+            self.angle = 0
+        return point
 
 
 class Bird(Tile):
@@ -283,8 +291,13 @@ class Bird(Tile):
 
         anim = PathAnimator()
         anim.emit = EllipseEmit(0, 10)
-        anim.emit.step = 20
+        anim.emit.step = 25
         self.add_animator(anim)
+
+
+class Pipe(Tile):
+    def __init__(self, sprite):
+        super(Pipe, self).__init__(sprite)
 
 
 class Floor(Tile):
@@ -292,8 +305,8 @@ class Floor(Tile):
         super(Floor, self).__init__(sprite)
 
         anim = ScrollAnimator()
-        anim.direction = (-10, 0)
-        anim.interval = 0.07
+        anim.direction = (-8, 0)
+        anim.interval = 0.08
         anim.area = sdl2.rect.SDL_Rect(
             0, self.position[1], self.position[0], HEIGHT)
         self.add_animator(anim)
@@ -302,12 +315,8 @@ class Floor(Tile):
         self.fill_size = (WIDTH, self.position[1])
 
 
-class StartScene(Scene):
-    def __init__(self, factory):
-        Scene.__init__(self, factory)
-        self._load()
-
-    def _load(self):
+class SceneResource:
+    def loadResource(self):
         img_background = self.factory.from_image(
             IMGS.get_path("background.png"))
         img_birds = self.factory.from_image(IMGS.get_path("bird.png"))
@@ -321,7 +330,7 @@ class StartScene(Scene):
 
         floor = Floor(img_floor)
         floor.position = (0, HEIGHT - int(img_floor.size[1] * SCALE))
-        floor.depth = 2
+        floor.depth = 3
         floor.scale = SCALE
 
         self.add_object(floor)
@@ -333,6 +342,91 @@ class StartScene(Scene):
         self.add_object(self.bird)
 
 
+class StartScene(Scene, SceneResource):
+    def __init__(self, factory):
+        super(StartScene, self).__init__(factory)
+        self.loadResource()
+
+
+class PlayScene(Scene, SceneResource):
+    def __init__(self, factory):
+        Scene.__init__(self, factory)
+        self.loadResource()
+        self.is_stop = False
+        self.colddown = 2
+        self.pipes = set([])
+
+    def process_objects(self, delta):
+        super(PlayScene, self).process_objects(delta)
+
+        if self.is_stop is True:
+            return
+
+        self.check_pipes(delta)
+
+        self.colddown -= delta
+        if self.colddown <= 0:
+            self.gen_pipe()
+            self.colddown = 3
+
+    def check_pipes(self, delta):
+        if self.is_stop is True:
+            return
+
+        def check_bound(p):
+            return p.dest.x + p.dest.w <= 0
+
+        outs = [p for p in self.pipes if check_bound(p)]
+
+        for p in outs:
+            self.pipes.remove(p)
+            self.remove_object(p)
+
+    def gen_pipe(self):
+        fixed_height = 40
+
+        img_pipe = self.factory.from_image(IMGS.get_path("pipe.png"))
+        up_pipe = Pipe(img_pipe)
+
+        up_pipe.scale = SCALE
+        up_pipe.flip = sdl2.render.SDL_FLIP_VERTICAL
+        up_pipe.depth = 2
+
+        down_pipe = Pipe(img_pipe)
+        down_pipe.scale = SCALE
+        down_pipe.depth = 2
+
+        mid_y = int(random.randint(280, 340))
+
+        up_pos = (WIDTH,  -(mid_y + fixed_height))
+        up_pipe.position = up_pos
+
+        down_pos = (WIDTH, mid_y + fixed_height)
+        down_pipe.position = down_pos
+
+        anim = ScrollAnimator()
+        anim.direction = (-8, 0)
+        anim.interval = 0.08
+        anim.area = sdl2.rect.SDL_Rect(0, up_pos[1], WIDTH, HEIGHT)
+        anim.repeat = False
+
+        up_pipe.add_animator(anim)
+
+        anim = ScrollAnimator()
+        anim.direction = (-8, 0)
+        anim.interval = 0.08
+        anim.area = sdl2.rect.SDL_Rect(0, down_pos[1], WIDTH, HEIGHT)
+        anim.repeat = False
+
+        down_pipe.add_animator(anim)
+
+        self.pipes.add(up_pipe)
+        self.pipes.add(down_pipe)
+
+        self.add_object(up_pipe)
+        self.add_object(down_pipe)
+
+
 def run():
     sdl2.ext.init()
     window = sdl2.ext.Window("The Flappybird Game", size=(WIDTH, HEIGHT))
@@ -342,13 +436,7 @@ def run():
 
     factory = sdl2.ext.SpriteFactory(sdl2.ext.TEXTURE, renderer=renderer)
     scenerenderer = SceneRenderSystem(renderer)
-
-    img_birds = factory.from_image(IMGS.get_path("bird.png"))
-    img_background = factory.from_image(IMGS.get_path("background.png"))
-    img_ground = factory.from_image(IMGS.get_path("ground.png"))
-    img_pipe = factory.from_image(IMGS.get_path("pipe.png"))
-
-    scene = StartScene(factory)
+    scene = PlayScene(factory)
 
     running = True
     while running:
