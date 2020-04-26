@@ -18,7 +18,11 @@ SCALE = WIDTH/768
 
 MODE_SCALE = 0
 MODE_TILE = 1
+SCROLL_DIRECTION = (-4, 0)
 
+EVENT_START_GAME = sdl2.events.SDL_USEREVENT + 1
+EVENT_PLAY_GAME = sdl2.events.SDL_USEREVENT + 2
+EVENT_END_GAME = sdl2.events.SDL_USEREVENT + 3
 
 class Tile:
     def __init__(self, sprite, x=0, y=0):
@@ -146,6 +150,11 @@ class Scene:
         for obj in self.objects:
             obj.process(delta)
 
+    def keydown(self, sym):
+        pass
+
+    def keyup(self, sym):
+        pass
 
 class SceneRenderSystem:
     def __init__(self, renderer):
@@ -175,7 +184,7 @@ class Animator:
     def __init__(self):
         self._ticks = 0
         self._last_ticks = 0
-        self.interval = 0.1  # ms
+        self.interval = 0.01  # ms
 
     def check_ticks(self, delta):
         self._ticks += delta
@@ -197,7 +206,7 @@ class TextureAnimator(Animator):
 
     def do_animation(self, tile, delta):
         size = len(self.frame_rects)
-        if size <= 1:
+        if size < 1:
             return
 
         self._frame_count += 1
@@ -260,7 +269,7 @@ class EllipseEmit:
         self.ew = ew
         self.eh = eh
         self.angle = 0
-        self.step = 10
+        self.step = 4
 
     def next(self, animator, tile, delta):
         pos = tile.position
@@ -280,20 +289,6 @@ class Bird(Tile):
     def __init__(self, sprite):
         super(Bird, self).__init__(sprite)
 
-        anim = TextureAnimator()
-        anim.interval = 0.1
-        anim.frame_rects = [
-            (0, 0, BIRD_SIZE[0], BIRD_SIZE[1]),
-            (BIRD_SIZE[0], 0, BIRD_SIZE[0], BIRD_SIZE[1]),
-            (BIRD_SIZE[0]*2, 0, BIRD_SIZE[0], BIRD_SIZE[1]),
-        ]
-        self.add_animator(anim)
-
-        anim = PathAnimator()
-        anim.emit = EllipseEmit(0, 10)
-        anim.emit.step = 25
-        self.add_animator(anim)
-
 
 class Pipe(Tile):
     def __init__(self, sprite):
@@ -305,8 +300,7 @@ class Floor(Tile):
         super(Floor, self).__init__(sprite)
 
         anim = ScrollAnimator()
-        anim.direction = (-8, 0)
-        anim.interval = 0.08
+        anim.direction = SCROLL_DIRECTION
         anim.area = sdl2.rect.SDL_Rect(
             0, self.position[1], self.position[0], HEIGHT)
         self.add_animator(anim)
@@ -347,15 +341,45 @@ class StartScene(Scene, SceneResource):
         super(StartScene, self).__init__(factory)
         self.loadResource()
 
+        anim = TextureAnimator()
+        anim.interval = 0.1
+        anim.frame_rects = [
+            (BIRD_SIZE[0], 0, BIRD_SIZE[0], BIRD_SIZE[1]),
+        ]
+        self.bird.add_animator(anim)
+
+        anim = PathAnimator()
+        anim.emit = EllipseEmit(0, 10)
+        anim.emit.step = 4
+        self.bird.add_animator(anim)
+
+    def keydown(self, sym):
+        if sym == sdl2.SDLK_SPACE:
+            ev = sdl2.events.SDL_Event()
+            ev.type = EVENT_PLAY_GAME
+            sdl2.events.SDL_PushEvent(ev)
+
 
 class PlayScene(Scene, SceneResource):
     def __init__(self, factory):
         Scene.__init__(self, factory)
         self.loadResource()
-        self.is_stop = False
-        self.colddown = 2
-        self.pipes = set([])
 
+        anim = TextureAnimator()
+        anim.interval = 0.1
+        anim.frame_rects = [
+            (0, 0, BIRD_SIZE[0], BIRD_SIZE[1]),
+            (BIRD_SIZE[0], 0, BIRD_SIZE[0], BIRD_SIZE[1]),
+            (BIRD_SIZE[0]*2, 0, BIRD_SIZE[0], BIRD_SIZE[1]),
+        ]
+        self.bird.add_animator(anim)
+
+        self.is_stop = False
+        self.colddown = 3
+        self.pipes = set([])
+        self.img_pipe = factory.from_image(IMGS.get_path("pipe.png"))
+
+        self.speed = 0
     def process_objects(self, delta):
         super(PlayScene, self).process_objects(delta)
 
@@ -363,11 +387,8 @@ class PlayScene(Scene, SceneResource):
             return
 
         self.check_pipes(delta)
-
-        self.colddown -= delta
-        if self.colddown <= 0:
-            self.gen_pipe()
-            self.colddown = 3
+        self.check_bird_speed(delta)
+        self.check_bird_collision(delta)
 
     def check_pipes(self, delta):
         if self.is_stop is True:
@@ -382,39 +403,42 @@ class PlayScene(Scene, SceneResource):
             self.pipes.remove(p)
             self.remove_object(p)
 
-    def gen_pipe(self):
-        fixed_height = 40
 
-        img_pipe = self.factory.from_image(IMGS.get_path("pipe.png"))
-        up_pipe = Pipe(img_pipe)
+        self.colddown -= delta
+        if self.colddown <= 0:
+            self.gen_pipe()
+            self.colddown = 2
+
+    def gen_pipe(self):
+        fixed_height = 50
+
+        up_pipe = Pipe(self.img_pipe)
 
         up_pipe.scale = SCALE
         up_pipe.flip = sdl2.render.SDL_FLIP_VERTICAL
         up_pipe.depth = 2
 
-        down_pipe = Pipe(img_pipe)
+        down_pipe = Pipe(self.img_pipe)
         down_pipe.scale = SCALE
         down_pipe.depth = 2
 
-        mid_y = int(random.randint(280, 340))
+        mid_y = int(random.randint(180, 340))
 
-        up_pos = (WIDTH,  -(mid_y + fixed_height))
+        up_pos = (WIDTH, mid_y - fixed_height - 560)
         up_pipe.position = up_pos
 
         down_pos = (WIDTH, mid_y + fixed_height)
         down_pipe.position = down_pos
 
         anim = ScrollAnimator()
-        anim.direction = (-8, 0)
-        anim.interval = 0.08
+        anim.direction = SCROLL_DIRECTION
         anim.area = sdl2.rect.SDL_Rect(0, up_pos[1], WIDTH, HEIGHT)
         anim.repeat = False
 
         up_pipe.add_animator(anim)
 
         anim = ScrollAnimator()
-        anim.direction = (-8, 0)
-        anim.interval = 0.08
+        anim.direction = SCROLL_DIRECTION
         anim.area = sdl2.rect.SDL_Rect(0, down_pos[1], WIDTH, HEIGHT)
         anim.repeat = False
 
@@ -426,17 +450,49 @@ class PlayScene(Scene, SceneResource):
         self.add_object(up_pipe)
         self.add_object(down_pipe)
 
+    def keydown(self, sym):
+        if sym != sdl2.SDLK_SPACE:
+            return
+
+        self.do_speed()
+
+    def do_speed(self):
+        self.speed = 10
+
+    def check_bird_speed(self, delta):
+        if self.speed <= 0:
+            self.bird.angle = 30
+            pos = self.bird.position
+            self.bird.position = (pos[0], int(pos[1] + delta * 200)) 
+            return
+
+        self.speed -= delta * 30
+        self.bird.angle = -30
+
+        pos = self.bird.position
+        self.bird.position = (pos[0], int(pos[1] - delta * 200)) 
+
+    def check_bird_collision(self, delta):
+        pass
+
+class EndScene(Scene, SceneResource):
+    def __init__(self, factory):
+        super(StartScene, self).__init__(factory)
+        self.loadResource()
+
+    def keydown(self, sym):
+        pass
 
 def run():
     sdl2.ext.init()
     window = sdl2.ext.Window("The Flappybird Game", size=(WIDTH, HEIGHT))
     window.show()
 
-    renderer = sdl2.ext.Renderer(window)
+    renderer = sdl2.ext.Renderer(window, flags=sdl2.render.SDL_RENDERER_PRESENTVSYNC)
 
     factory = sdl2.ext.SpriteFactory(sdl2.ext.TEXTURE, renderer=renderer)
     scenerenderer = SceneRenderSystem(renderer)
-    scene = PlayScene(factory)
+    scene = StartScene(factory)
 
     running = True
     while running:
@@ -444,9 +500,20 @@ def run():
             if event.type == sdl2.SDL_QUIT:
                 running = False
                 break
+            if event.type == sdl2.SDL_KEYDOWN:
+                scene.keydown(event.key.keysym.sym)
+            elif event.type == sdl2.SDL_KEYUP:
+                scene.keyup(event.key.keysym.sym)
+            elif event.type == EVENT_START_GAME:
+                scene = StartScene(factory)
+            elif event.type == EVENT_PLAY_GAME:
+                scene = PlayScene(factory)
+            elif event.type == EVENT_END_GAME:
+                scene = EndScene(factory)
 
         scene.process()
         scenerenderer.render(scene)
+
         sdl2.SDL_Delay(20)
 
 
