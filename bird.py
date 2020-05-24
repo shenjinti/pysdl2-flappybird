@@ -24,6 +24,7 @@ EVENT_START_GAME = sdl2.events.SDL_USEREVENT + 1
 EVENT_PLAY_GAME = sdl2.events.SDL_USEREVENT + 2
 EVENT_END_GAME = sdl2.events.SDL_USEREVENT + 3
 
+
 class Tile:
     def __init__(self, sprite, x=0, y=0):
         self.fill_mode = MODE_SCALE
@@ -156,6 +157,7 @@ class Scene:
     def keyup(self, sym):
         pass
 
+
 class SceneRenderSystem:
     def __init__(self, renderer):
         self.sdlrenderer = renderer.sdlrenderer
@@ -285,6 +287,33 @@ class EllipseEmit:
         return point
 
 
+class EasingEmit:
+    def __init__(self):
+        self.chain = []
+
+    def next(self, animator, tile, delta):
+        pass
+
+    def to(self, attrs, duration):
+        return self
+
+    def linear(pos):
+        return pos
+
+    def quad_in(pos):
+        return pow(pos, 2)
+
+    def quad_out(pos):
+        return -(pow((pos - 1), 2) - 1)
+
+    def quad_in_out(pos):
+        pos /= 0.5
+        if pos < 1:
+            return 0.5 * pow(pos, 2)
+        pos -= 2
+        return -0.5 * (pos * pos - 2)
+
+
 class Bird(Tile):
     def __init__(self, sprite):
         super(Bird, self).__init__(sprite)
@@ -380,6 +409,7 @@ class PlayScene(Scene, SceneResource):
         self.img_pipe = factory.from_image(IMGS.get_path("pipe.png"))
 
         self.speed = 0
+
     def process_objects(self, delta):
         super(PlayScene, self).process_objects(delta)
 
@@ -387,7 +417,6 @@ class PlayScene(Scene, SceneResource):
             return
 
         self.check_pipes(delta)
-        self.check_bird_speed(delta)
         self.check_bird_collision(delta)
 
     def check_pipes(self, delta):
@@ -402,7 +431,6 @@ class PlayScene(Scene, SceneResource):
         for p in outs:
             self.pipes.remove(p)
             self.remove_object(p)
-
 
         self.colddown -= delta
         if self.colddown <= 0:
@@ -454,26 +482,40 @@ class PlayScene(Scene, SceneResource):
         if sym != sdl2.SDLK_SPACE:
             return
 
-        self.do_speed()
+        self.do_jump()
 
-    def do_speed(self):
-        self.speed = 10
+    def do_jump(self):
+        pass
+        #elf.speed = 15
+    """
 
     def check_bird_speed(self, delta):
+        if self.speed > 0:
+            self.speed -= delta * 60
+            pos = self.bird.position
+            self.bird.position = (pos[0], int(pos[1] - delta * 150))
+            return
+
+
+        pos = self.bird.position
+        self.bird.position = (pos[0], int(pos[1] + delta * 150))
+        
         if self.speed <= 0:
             self.bird.angle = 30
             pos = self.bird.position
-            self.bird.position = (pos[0], int(pos[1] + delta * 200)) 
+            self.bird.position = (pos[0], int(pos[1] + delta * 500))
             return
 
-        self.speed -= delta * 30
+        self.speed -= delta * 60
         self.bird.angle = -30
 
         pos = self.bird.position
-        self.bird.position = (pos[0], int(pos[1] - delta * 200)) 
+        self.bird.position = (pos[0], int(pos[1] - delta * 380))
+    """
 
     def check_bird_collision(self, delta):
         pass
+
 
 class EndScene(Scene, SceneResource):
     def __init__(self, factory):
@@ -483,12 +525,14 @@ class EndScene(Scene, SceneResource):
     def keydown(self, sym):
         pass
 
+
 def run():
     sdl2.ext.init()
     window = sdl2.ext.Window("The Flappybird Game", size=(WIDTH, HEIGHT))
     window.show()
 
-    renderer = sdl2.ext.Renderer(window, flags=sdl2.render.SDL_RENDERER_PRESENTVSYNC)
+    renderer = sdl2.ext.Renderer(
+        window, flags=sdl2.render.SDL_RENDERER_PRESENTVSYNC)
 
     factory = sdl2.ext.SpriteFactory(sdl2.ext.TEXTURE, renderer=renderer)
     scenerenderer = SceneRenderSystem(renderer)
