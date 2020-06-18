@@ -618,8 +618,9 @@ class PlayScene(Scene, SceneResource):
 
     def game_over(self):
         self.is_stop = True
-        self.remove_object(self.bird)
-        self.bird = None
+        #self.remove_object(self.bird)
+
+        self.bird.actions = []
 
         self.floor.actions = []
 
