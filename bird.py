@@ -6,7 +6,7 @@ import sdl2.ext
 import time
 import math
 import random
-
+from easing_functions import easing
 
 WIDTH = 480
 HEIGHT = 640
@@ -23,6 +23,8 @@ SCROLL_DIRECTION = (-4, 0)
 EVENT_START_GAME = sdl2.events.SDL_USEREVENT + 1
 EVENT_PLAY_GAME = sdl2.events.SDL_USEREVENT + 2
 EVENT_END_GAME = sdl2.events.SDL_USEREVENT + 3
+
+FRAME_COST = 1 / 60.0
 
 
 class Tile:
@@ -43,6 +45,32 @@ class Tile:
         self.src = sdl2.rect.SDL_Rect(0, 0, self._w, self._h)
         self.dest = sdl2.rect.SDL_Rect(x, y, self._w, self._h)
         self.actions = []
+
+    @property
+    def x(self):
+        return self._x
+
+    @x.setter
+    def x(self, value):
+        self._x = value
+        self.dest.x = value
+
+    @property
+    def y(self):
+        return self._y
+
+    @y.setter
+    def y(self, value):
+        self._y = value
+        self.dest.y = value
+
+    @property
+    def w(self):
+        return self._w
+
+    @property
+    def h(self):
+        return self._h
 
     @property
     def position(self):
@@ -89,9 +117,15 @@ class Tile:
                 continue
             obj.do_animation(self, delta)
 
-    def add_animator(self, anim):
+    def add_animator(self, anim, unique=False):
         if hasattr(anim, "do_animation") is False:
             raise Exception("Invalid animator")
+        if unique:
+            for i in range(len(self.actions)):
+                if type(self.actions[i]) == type(anim):
+                    del self.actions[i]
+                    break
+
         self.actions.append(anim)
 
     def fill(self):
@@ -186,7 +220,7 @@ class Animator:
     def __init__(self):
         self._ticks = 0
         self._last_ticks = 0
-        self.interval = 0.01  # ms
+        self.interval = 0.01
 
     def check_ticks(self, delta):
         self._ticks += delta
@@ -287,31 +321,91 @@ class EllipseEmit:
         return point
 
 
+class EasingIter:
+    def __init__(self, obj, param, target, func, duration):
+        def update_param(obj, param, value):
+            orig_type = type(getattr(obj, param))
+            setattr(obj, param, orig_type(value))
+
+        self._update = lambda _x: update_param(obj, param, _x)
+        self._value = lambda: getattr(obj, param)
+        self._target = target
+        self._duration = duration / 1000.0
+        self._func = func
+        self._expend = 0.0
+        self.is_done = False
+        self._ease_func = None
+
+    def update(self, delta):
+        if self._ease_func is None:
+            self._ease_func = self._func(
+                start=self._value(), end=self._target, duration=1)
+
+        self._expend += delta
+
+        if self._expend >= self._duration:
+            self.is_done = True
+
+        ratio = self._expend / self._duration
+        v = self._ease_func.ease(ratio)
+        self._update(v)
+        return True
+
+
 class EasingEmit:
-    def __init__(self):
-        self.chain = []
+    """
+        `attrs`:
+            * x, y, angle, alpha, scale
+        usage:
+        emit = EasingEmit()
+        emit.linear({"x": 100}, 200)
+        emit.quad_in({"y":200, "x": 300}, 100)
+        emit.wait(200)
+        emit.quad_out({"y": 100}, 200)
+        emit.wait()
+
+    """
+
+    def __init__(self, animator):
+        self.chains = []
+        self._animator = animator
 
     def next(self, animator, tile, delta):
+
+        while len(self.chains) > 0:
+            chain = self.chains[0]
+
+            updated = chain.update(delta)
+
+            if chain.is_done:
+                self.chains.pop(0)
+                continue
+            break
+
+    def clear(self):
+        self.chains = []
+
+    def wait(self, duration=0.0):
+        # self._to({})
         pass
 
-    def to(self, attrs, duration):
-        return self
+    def _to(self, attrs, duration, func):
+        for (attr, target) in attrs.items():
+            easingit = EasingIter(self._animator, attr,
+                                  target, func, duration)
+            self.chains.append(easingit)
 
-    def linear(pos):
-        return pos
+    def linear(self, attrs, duration):
+        self._to(attrs, duration, easing.LinearInOut)
 
-    def quad_in(pos):
-        return pow(pos, 2)
+    def quad_in(self, attrs, duration):
+        self._to(attrs, duration, easing.QuadEaseIn)
 
-    def quad_out(pos):
-        return -(pow((pos - 1), 2) - 1)
+    def quad_out(self, attrs, duration):
+        self._to(attrs, duration, easing.SineEaseOut)
 
-    def quad_in_out(pos):
-        pos /= 0.5
-        if pos < 1:
-            return 0.5 * pow(pos, 2)
-        pos -= 2
-        return -0.5 * (pos * pos - 2)
+    def quad_in_out(self, attrs, duration):
+        self._to(attrs, duration, easing.QuadEaseInOut)
 
 
 class Bird(Tile):
@@ -355,6 +449,8 @@ class SceneResource:
         floor.position = (0, HEIGHT - int(img_floor.size[1] * SCALE))
         floor.depth = 3
         floor.scale = SCALE
+
+        self.floor = floor
 
         self.add_object(floor)
 
@@ -407,8 +503,8 @@ class PlayScene(Scene, SceneResource):
         self.colddown = 3
         self.pipes = set([])
         self.img_pipe = factory.from_image(IMGS.get_path("pipe.png"))
-
-        self.speed = 0
+        
+        self.do_jump()
 
     def process_objects(self, delta):
         super(PlayScene, self).process_objects(delta)
@@ -482,48 +578,53 @@ class PlayScene(Scene, SceneResource):
         if sym != sdl2.SDLK_SPACE:
             return
 
+        if self.is_stop:
+            ev = sdl2.events.SDL_Event()
+            ev.type = EVENT_PLAY_GAME
+            sdl2.events.SDL_PushEvent(ev)
+            return
+
         self.do_jump()
 
     def do_jump(self):
-        pass
-        #elf.speed = 15
-    """
+        anim = PathAnimator()
+        anim.emit = EasingEmit(self.bird)
 
-    def check_bird_speed(self, delta):
-        if self.speed > 0:
-            self.speed -= delta * 60
-            pos = self.bird.position
-            self.bird.position = (pos[0], int(pos[1] - delta * 150))
-            return
+        if self.bird.y <= - BIRD_SIZE[1]:
+            self.bird.y = - BIRD_SIZE[1]
 
+        jump_amount = 60
+        jump_time = 180
 
-        pos = self.bird.position
-        self.bird.position = (pos[0], int(pos[1] + delta * 150))
-        
-        if self.speed <= 0:
-            self.bird.angle = 30
-            pos = self.bird.position
-            self.bird.position = (pos[0], int(pos[1] + delta * 500))
-            return
+        y = self.bird.y
+        anim.emit.linear({"y": self.bird.y - jump_amount}, jump_time)
+        anim.emit.quad_in({"y": y + 150}, jump_time * 2.5)
+        anim.emit.linear({"y": HEIGHT}, (HEIGHT - (y + 200)))
 
-        self.speed -= delta * 60
-        self.bird.angle = -30
-
-        pos = self.bird.position
-        self.bird.position = (pos[0], int(pos[1] - delta * 380))
-    """
+        self.bird.add_animator(anim, True)
 
     def check_bird_collision(self, delta):
-        pass
+        if self.bird.y + self.bird.size[1] >= self.floor.y:
+            self.game_over()
+            return
 
+        for p in self.pipes:
+            if self.bird.dest.x < p.dest.x + p.w and \
+                    self.bird.dest.x + self.bird.w > p.dest.x and \
+                    self.bird.dest.y < p.dest.y + p.h and \
+                    self.bird.dest.y + self.bird.h > p.dest.y:
+                self.game_over()
+                break
 
-class EndScene(Scene, SceneResource):
-    def __init__(self, factory):
-        super(StartScene, self).__init__(factory)
-        self.loadResource()
+    def game_over(self):
+        self.is_stop = True
+        self.remove_object(self.bird)
+        self.bird = None
 
-    def keydown(self, sym):
-        pass
+        self.floor.actions = []
+
+        for p in self.pipes:
+            p.actions = []
 
 
 def run():
@@ -558,8 +659,8 @@ def run():
         scene.process()
         scenerenderer.render(scene)
 
-        sdl2.SDL_Delay(20)
+        sdl2.SDL_Delay(16)
 
 
 if __name__ == "__main__":
-    sys.exit(run())
+    run()
